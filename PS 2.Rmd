@@ -1,0 +1,129 @@
+---
+title: "Problem Set 2"
+author: "Soowon Jo"
+date: "2/2/2020"
+output: 
+  pdf_document: 
+    extra_dependencies: bbm
+    latex_engine: xelatex
+---
+
+### Problem Set 2: Uncertainty, Holdouts, and Bootstrapping
+
+####1. Estimate the MSE of the model using the traditional approach. That is, fit the linear regression model using the entire dataset and calculate the mean squared error for the entire dataset. Present and discuss your results at a simple, high level. 
+
+```{r, echo = FALSE}
+setwd("/Users/soowonjo/Desktop/MachineLearning/PB2")
+nes = read.csv("nes2008.csv")
+
+library(rcfss)
+library(tidyverse)
+library(modelr)
+```
+```{r}
+nes_lm <- lm(biden ~ female + age + educ + dem + rep, data = nes)
+summary(nes_lm)
+
+mse(nes_lm, nes)
+```
+When the model is ideally trained, MSE becomes closer to zero, meaning that actual outputs exactly match the expected outputs. However, the result shown above indicates that age and education do not have a significant effect on predicting how one would feel about Biden. Whether the person is female or either a Democrat or a Republican, play significant predictors on how people would feel about Biden. To be specific, a female is more likely to rate 4.1 points higher on average on the feeling thermometer meaning the person have more feelings of warmth towards Biden compared to how much warmth feeling a male has toward Biden. Moreover, a Democrat is more likely to rate Biden 15.4 points higher on average while a Republican is more likely to rate Biden 15.9 points lower on average. 
+
+
+####2. Calculate the test MSE of the model using the simple holdout validation approach.  
+```{r, echo = FALSE}
+library(ISLR)
+library(yardstick)
+library(broom)
+library(rsample)
+```
+__2.1 Split the sample set into a training set (50%) and a holdout set (50%). Be sure to set your seed prior to this part of your code to guarantee reproducibility of results. __
+```{r}
+set.seed(1234)
+
+auto_split <- initial_split(data = nes, 
+                            prop = 0.5) 
+auto_train <- training(auto_split)
+auto_test <- testing(auto_split)
+```
+__2.2 Fit the linear regression model using only the training observations.__
+```{r}
+nes_train_lm <- lm(biden ~ female + age + educ + dem + rep, data = auto_train)
+summary(nes_train_lm)
+```
+__2.3 Calculate the MSE using only the test set observations.__
+```{r}
+MSE <- function(estimatedValues, actualValues, sampleSize) {
+	sum((estimatedValues - actualValues)^2) / sampleSize;
+}
+
+estimatedValues = predict(nes_train_lm, subset(auto_test, select=c("female", "age","educ","dem","rep")));
+actualValues = auto_test$biden;
+sampleSize = nrow(auto_test);
+
+MSE(estimatedValues, actualValues, sampleSize)
+```
+__2.4 How does this value compare to the training MSE from question 1? Present numeric comparison and discuss a bit.__
+```{r}
+compare = mse(nes_lm, nes) - MSE(estimatedValues, actualValues, sampleSize)
+compare
+```
+The model trained on the entire dataset has a lower MSE than the model trained on only the test set from question 2.3. This result may be the case since fewer observations used in the model give more noise in the data, which ultimately leads to increase in MSE. 
+
+
+####3. Repeat the simple validation set approach from the previous question 1000 times, using 1000 different splits of the observations into a training set and a test/validation set. Visualize your results as a sampling distribution ( hint: think histogram or density plots). Comment on the results obtained.
+
+```{r}
+set.seed(5)
+mse <- vector("double",1000)
+
+for(i in 1:1000){
+	train = sample(1:nrow(nes), 0.5*nrow(nes))
+	test = setdiff(1:nrow(nes),train)
+	mod <- lm(biden ~ female + age+ educ + dem + rep,
+		data = nes[train,])
+	pred <- predict(mod, nes[test,])
+	x <- nes$biden[test]-pred
+	mse[i] <- mean(x*x)
+}
+
+hist(mse)
+```
+```{r}
+mean(mse)
+```
+The average of MSEs generated from the test is approximately 398.6, which is very close to the MSE (395.2702) of the original model. Repeating the simple validation set approach, thus, performs quite well at approximating the parameters of the original model. 
+
+
+####4. Compare the estimated parameters and standard errors from the original model in question 1 (the model estimated using all of the available data) to parameters and standard errors estimated using the bootstrap (B = 1000). Comparison should include, at a minimum, both numeric output as well as discussion on differences, similarities, etc. Talk also about the conceptual use and impact of bootstrapping.
+```{r}
+mu_samp <- mean(nes$biden)
+sem_samp <-sqrt(mu_samp / nrow(nes))
+
+lm_coefs <- function(splits, ...){
+	mod <- lm(..., data = analysis(splits))
+	tidy(mod)
+}
+
+nes_boot <- nes %>%
+	bootstraps(1000) %>%
+	mutate(coef = map(splits, lm_coefs, as.formula(biden ~ female + age + educ + dem + rep)))
+
+biden_boot_lm_df <- nes_boot %>%
+	unnest(coef) %>%
+	group_by(term) %>%
+	summarize(boot.estimate = mean(estimate),
+		boot.se = sd(estimate, na.rm = TRUE))
+
+biden_lm_df <- tidy(nes_lm)
+
+biden_lm_df <- biden_lm_df %>%
+	left_join(biden_boot_lm_df, by="term") %>%
+	select(c("term","boot.estimate","boot.se","estimate","std.error"))
+
+biden_lm_df
+```
+The estimated parameters and standard errors retrieved from both original linear model and bootstrap model are almost identical. The major difference between the two outputs is that the standard errors across the input variables (with the exception of intercept coeffcients) generated in the bootstrap model were higher than those in the original linear model. From this result, we could assume that parametric approach, in which we make assumptions about the parameters (defining properties) of the population distribution from which the data is drawn, use more information than a non-parametric approach. Lower standard errors for the model's parameters, therefore, means that the estimations of parametric approach is more precise.
+
+Bootstrap is a resampling method by independently sampling with replacement from an existing sample data with same sample size n, and performing inference among these resampled data. This method is useful when we have a very small sample size and a data whose distributional form is unknown. Sample sizes as small as 10 can also be usable for bootstrap and we are still able to create model ensemble by combining predictions from multiple models. The method is capable of doing so since it attempts to capture the structure of the data itself. With the use of resampling and model being fitted many times, the bootstrap method yields results that avoid fitting against the noise and pecularities of some individual sample in the data. However, bootstrapping will yield about the same results as fitting a parametric model when the data is large and follows a distribution.    
+
+
